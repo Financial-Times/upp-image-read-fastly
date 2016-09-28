@@ -43,29 +43,66 @@
 
 	}
 
-
-sub vcl_recv {
-
-	set req.backend = s3_eu;
-	set req.http.Host = "com.ft.imagepublish.prod.s3.amazonaws.com";
-
-	# Use US s3 bucket if the request is from the America & Asia, or EU (default) is unhealthy
-	if (geoip.continent_code ~ "(NA|SA|OC|AS)" || !req.backend.healthy) {
-
-		set req.backend = s3_us;
-		set req.http.Host = "com.ft.imagepublish.prod-us.s3.amazonaws.com";
-
-		# Failover to EU if US backend is marked as unhealthy
-		if (!req.backend.healthy) {
+sub vcl_recv {		
+	if (req.restarts == 0) {
+		set req.backend = s3_eu;
+		set req.http.Host = "com.ft.imagepublish.prod.s3.amazonaws.com";
+		set req.http.x-upp-backend="EU";
+		
+		# Use US s3 bucket if the request is from the America & Asia, or EU (default) is unhealthy
+		if (geoip.continent_code ~ "(NA|SA|OC|AS)" || !req.backend.healthy) {
+			set req.backend = s3_us;
+			set req.http.Host = "com.ft.imagepublish.prod-us.s3.amazonaws.com";
+			set req.http.x-upp-backend="US";
+		
+			# If both EU and US are unhealthy serve from EU
+			# Failover to EU if US backend is marked as unhealthy
+			if (!req.backend.healthy) {
+				set req.backend = s3_eu;
+				set req.http.Host = "com.ft.imagepublish.prod.s3.amazonaws.com";
+				set req.http.x-upp-backend="EU";
+			}
+		}
+	  } elsif(req.restarts == 1) { # IF the first response was 403(image missing from bucket) try the other backend if healthy regardless of location
+			if (req.http.x-upp-backend == "EU") {
+				set req.backend = s3_us;
+				set req.http.Host = "com.ft.imagepublish.prod-us.s3.amazonaws.com";
+				set req.http.x-upp-backend="US";
+				if (!req.backend.healthy) {
+					set req.backend = s3_eu;
+					set req.http.Host = "com.ft.imagepublish.prod.s3.amazonaws.com";
+					set req.http.x-upp-backend="EU";
+				}
+		} elsif (req.http.x-upp-backend == "US") {
 			set req.backend = s3_eu;
 			set req.http.Host = "com.ft.imagepublish.prod.s3.amazonaws.com";
+			set req.http.x-upp-backend="EU";
+			if (!req.backend.healthy) {
+				set req.backend = s3_us;
+				set req.http.Host = "com.ft.imagepublish.prod-us.s3.amazonaws.com";
+				set req.http.x-upp-backend="US";
+			}
 		}
+	 }
+	
+	# end default conditions
+	if (req.request != "HEAD" && req.request != "GET") {
+		return(pass);
 	}
 
-    # end default conditions
-    if (req.request != "HEAD" && req.request != "GET") {
-    	return(pass);
-    }
+	return(lookup);
+}
 
-    return(lookup);
+sub vcl_fetch {
+		if(beresp.status == 403 && req.restarts == 0) {
+				restart;
+		}
+}
+
+sub vcl_deliver {
+
+if (req.http.x-upp-backend) {
+		set resp.http.x-upp-backend = req.http.x-upp-backend;
+	}
+
 }
