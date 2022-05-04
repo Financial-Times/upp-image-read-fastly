@@ -54,7 +54,7 @@ sub vcl_recv {
         set req.http.x-upp-backend="EU";
         
 	    # Use US s3 bucket if the request is from the America & Asia, or EU (default) is unhealthy
-	    if (geoip.continent_code ~ "(NA|SA|OC|AS)" || !req.backend.healthy) {
+	    if (client.geo.continent_code ~ "(NA|SA|OC|AS)" || !req.backend.healthy) {
 		    set req.backend = s3_us;
 		    set req.http.Host = "com.ft.imagepublish.upp-prod-us.s3.amazonaws.com";
 		    set req.http.x-upp-backend="US";
